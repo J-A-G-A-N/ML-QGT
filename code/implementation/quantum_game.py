@@ -1,4 +1,3 @@
-from math import isclose
 import numpy as np
 import qiskit
 import qiskit_aer
@@ -6,7 +5,7 @@ from enum import Enum
 from numpy.typing import NDArray
 
 class ExecutionType(Enum):
-    _StateVector  = 1 
+    state_vector  = 1 
     aer_sim  = 2 
 
 class Player:
@@ -32,7 +31,7 @@ class UnitaryOperator:
 
         return U
 
-class EntaglingOperator:
+class EntanglingOperator:
     @staticmethod
     def pauli_x() -> NDArray[np.complex128]:
         return np.array(([0,1],[1,0]),dtype=np.complex128)
@@ -65,9 +64,10 @@ class EntaglingOperator:
 class QuantumPrisonersDilemma:
     def __init__(self,gamma):
         self.gamma = gamma
-        self.J = EntaglingOperator.create(gamma)
-        self.J_dagger = EntaglingOperator.dagger(self.J)
-
+        self.J = EntanglingOperator.create(gamma)
+        self.J_dagger = EntanglingOperator.dagger(self.J)
+        self.execution_type = 0
+        self.state_vector = None
     def get_player_unitary(self,player:Player):
 
         theta, alpha, beta  = player.get_parameters()
@@ -87,40 +87,52 @@ class QuantumPrisonersDilemma:
 
         self.qc.unitary(Operator(self.J_dagger),[0,1],label=r"$J^\dagger$")
 
-    def simulate(self,execution_type:ExecutionType,shots:int|None=None):
+    def simulate(self,execution_type:ExecutionType,shots:int=1024):
+
+        self.execution_type =execution_type 
         match execution_type:
             case ExecutionType.aer_sim:
-                if shots == None:
+                if shots is None or shots <=0:
                     raise ValueError("'shots' should have value greater than 0.")
-                self.execution_type = ExecutionType.aer_sim
-                self.qc.measure_all()
+
+                self.shots = shots
+                meas_circuit = self.qc.copy()
+                meas_circuit.measure_all()
 
                 simulator = qiskit_aer.AerSimulator()
-                self.shots = shots
-                results = simulator.run(self.qc,shots = shots).result()
+                results = simulator.run(meas_circuit ,shots = shots).result()
                 self.counts = results.get_counts()
 
-            case ExecutionType._StateVector:
-                self.execution_type = ExecutionType._StateVector
+            case ExecutionType.state_vector:
                 self.state_vector =  qiskit.quantum_info.Statevector.from_instruction(self.qc)
 
-    def compute_probabilites(self,):
+# this is because of the qiskit qubit ordering
+# qiskit_probabilities[2] → actual probabilities[1]
+# qiskit_probabilities[1] → actual probabilities[2]
+    def compute_probabilities(self):
         match self.execution_type:
             case ExecutionType.aer_sim:
                 probabilities = np.array([
-                    self.counts.get("00",0) / self.shots,
-                    self.counts.get("01",0) / self.shots,
+                    self.counts.get("00",0) / self.shots, 
                     self.counts.get("10",0) / self.shots,
+                    self.counts.get("01",0) / self.shots,
                     self.counts.get("11",0) / self.shots
                     ])
 
-                if isclose(np.sum(probabilities),1):
-                    return probabilities
-                else:
+                if not np.isclose(np.sum(probabilities),1):
                     raise ValueError("'probabilities' do not add upto 1")
-            case ExecutionType._StateVector:
-                probabilities = self.state_vector.probabilities()
+            case ExecutionType.state_vector:
+                qiskit_probabilities = self.state_vector.probabilities()
+                probabilities = np.array([
+                    qiskit_probabilities[0],
+                    qiskit_probabilities[2],
+                    qiskit_probabilities[1],
+                    qiskit_probabilities[3]
+                    ])
+            case _:
+                raise ValueError(f"Unknown execution type: {self.execution_type}")
 
+        return probabilities
     def compute_payoff(self,probabilities)->tuple[float,float]:
         P00, P01, P10, P11 = probabilities
 
