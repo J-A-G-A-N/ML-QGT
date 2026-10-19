@@ -1,0 +1,6 @@
+numpy
+sympy
+matplotlib
+marimo
+numba
+ipython
